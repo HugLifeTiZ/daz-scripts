@@ -1,0 +1,120 @@
+// DAZ Studio version 4.20.0.17 filetype DAZ Script
+
+/******************************************************************************
+ * Script by TiZ; collection of utility functions.
+ *
+ * TiZ's DAZ scripts are public domain; that applies *only* to the scripts, and
+ * not to any content that a script is for. Please feel free to derive or learn
+ * from this script as you wish! <3
+ ******************************************************************************/
+
+
+/******************************************************************************/
+// void : Pops up an error message box. Can abort the script via throwing an
+// error if requested.
+function error (text, doThrow) {
+	MessageBox.critical(text, qsTr("Script Error"), qsTr("&Ok"));
+	if (doThrow) {
+		throw new Error();
+	}
+}
+
+/******************************************************************************/
+// Object : An object dictionary representing all the critical parts of a given
+// node. If there is no node passed, use the selected node.
+function getNodeDict (node, cachedGeom) {
+	var retval = new Object();
+	retval.error = null;
+	retval.isNodeDict = true;
+	if (!node) node = Scene.getPrimarySelection();
+	retval.node = node
+	if (retval.node && retval.node.inherits("DzBone")){
+		retval.node = oNode.getSkeleton();
+	}
+	if (!retval.node) {
+		retval.error = "No node selected.";
+		return retval;
+	}
+	retval.object = retval.node.getObject();
+	if (!retval.object) {
+		retval.error = "Selected node does not have an object.";
+		return retval;
+	}
+	retval.shape = retval.object.getCurrentShape();
+	if (!retval.shape) {
+		retval.error = "Selected node does not have a shape.";
+		return retval;
+	}
+	if (cachedGeom) {
+		retval.shape.invalidateWorkingMesh();
+		retval.mesh = retval.object.getCachedGeom();
+	} else {
+		retval.mesh = retval.shape.getGeometry();
+	}
+	if (!retval.mesh || !retval.mesh.inherits("DzFacetMesh")) {
+		retval.error = "Selected node does not have a facet mesh.";
+	}
+	return retval;
+}
+
+/******************************************************************************/
+// void : Causes all assets of a node to be saved with a scene.
+function modifyAllAssets (node, saveMaterials) {
+	var obj;
+	if (node && node.isNodeDict) obj = node;
+	else obj = getNodeDict(node);
+	obj.node.modifyAsset();
+	obj.shape.modifyGeometryAsset();
+	obj.mesh.modifyAsset();
+
+	// All of the modifiers need to have this invoked manually.
+	for (var i = 0; i < obj.object.getNumModifiers(); i++) {
+		obj.object.getModifier(i).modifyAsset();
+	}
+	// Materials probably don't *need* to be saved, so let's make this optional.
+	if (saveMaterials) {
+		for (var i = 0; i < obj.shape.getNumMaterials(); i++) {
+			obj.shape.getMaterial(i).modifyAsset();
+		}
+	}
+}
+
+/******************************************************************************/
+// void : Makes the node's mesh a deep copy so that modifications to it do not
+// affect other instances of the same node.
+function copyMesh (node) {
+	var obj;
+	if (node && node.isNodeDict) obj = node;
+	else obj = getNodeDict(node);
+
+	// The easy part; copy the mesh.
+	var newMesh = obj.mesh.makeCopy(false, false);
+	obj.shape.setFacetMesh(newMesh);
+	obj.mesh = newMesh;
+
+	// The hard part; UV sets are a pain in the ass!!
+	var numUVSets = obj.mesh.getNumUVSets();
+	var uvSets = Array(numUVSets);
+	for (var i = 0; i < numUVSets; i++) {
+		uvSets[i] = copyUVSet(obj.mesh.getUVSet(i));
+		obj.mesh.insertUVSet(i, uvSets[i]);
+	}
+	// Doing it this way causes the active UV on the model instance to get
+	// all goofed up. So we're just leaving this commented for posterity.
+	/*obj.mesh.removeAllUVSets();
+	for (var i = 0; i < numUVSets; i++) {
+		obj.mesh.addUVSet(uvSets[i]);
+	}*/
+}
+
+/******************************************************************************/
+// DzUVSet : Create a copy of a given UV set so that it can be saved in the
+// scene with other modified assets. Where is modifyAsset on DzUVSet, Daz?
+function copyUVSet (uvSet) {
+	var retval = new DzUVSet();
+	retval.name = uvSet.name;
+	for (var i = 0; i < uvSet.getNumValues(); i++) {
+		retval.appendPnt2Vec(uvSet.getPnt2Vec(i));
+	}
+	return retval;
+}

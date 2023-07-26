@@ -1,0 +1,19 @@
+function propsAndMethods(obj) {
+	var classInfo = obj.name + " (" + obj.className() + ")";
+	var separator = "";
+	for (var i = 0; i < classInfo.length; i++){
+		separator += '=';
+	}
+	print(separator);
+	print(classInfo);
+	print(separator);
+	//var properties = new RegExp("([a-zA-Z0-9]+(\\(.*?\\))?),", "g");
+	Object.getOwnPropertyNames(obj).sort().forEach(function (item) {
+		print(item);
+	});
+	/*for (item in arr){
+		print(arr[item].toString().replace(properties, "$1\n"));
+	}*/
+	print(separator);
+	print("");
+}

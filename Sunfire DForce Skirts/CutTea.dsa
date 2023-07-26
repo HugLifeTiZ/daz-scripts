@@ -1,0 +1,20 @@
+// DAZ Studio version 4.20.0.17 filetype DAZ Script
+
+/******************************************************************************
+ * Script by TiZ.
+ *
+ * TiZ's DAZ scripts are public domain; that applies *only* to the scripts, and
+ * not to any content that a script is for. Please feel free to derive or learn
+ * from this script as you wish! <3
+ *
+ * An asset link is used to load this script so it can reference its neighbor,
+ * which does the actual heavy lifting.
+ *
+ * See SkirtTrimmer.dsa for more information on this set of scripts.
+ ******************************************************************************/
+
+(function() {
+	var dir_self = new DzDir(new DzFileInfo(getScriptFileName()).path());
+	include (dir_self.filePath("SkirtTrimmer.dsa"));
+ 	cutSkirtToLength("Tea");
+})();

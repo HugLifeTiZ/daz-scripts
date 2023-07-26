@@ -1,0 +1,80 @@
+// DAZ Studio version 4.20.0.17 filetype DAZ Script
+
+/******************************************************************************
+ * Script by TiZ.
+ *
+ * TiZ's DAZ scripts are public domain; that applies *only* to the scripts, and
+ * not to any content that a script is for. Please feel free to derive or learn
+ * from this script as you wish! <3
+ *
+ * About this script specifically:
+ *
+ * The waistband can be kind of a pain if you want to fit a top over it or
+ * blend the skirt in with a top to make it look like a dress. The waistband
+ * is a single surface because it is intended to not be simulated; its dynamic
+ * strength is set to zero. So it serves as an anchor for the flowing cloth
+ * of the skirt. But it's actually two different geometries: the top of the
+ * skirt, and a detached, disconnected waistband.
+ *
+ * Because the actual waistband is disconnected, we can select it by selecting
+ * the skirt surface, selecting all connected facets, and then inverting the
+ * selection. We can then hide it at will.
+ *
+ * But we can't *un*hide it, though; there's no showSelectedFacets function.
+ * So instead we just blunt-force show the entire abdomen group, which contains
+ * the waistband.
+ *
+ * We don't want to reference the Waistband surface, because its name may change
+ * if it gets split into separate surfaces. This script will work regardless of
+ * whether the inner and outer waistband are separate surfaces.
+ *
+ * Also it's kind of important to note that this doesn't really seem to work?
+ * Hidden geometry does not seem to persist between saves and loads. :(
+ ******************************************************************************/
+
+/******************************************************************************/
+// Include all my utility functions.
+var dir_self = new DzDir(new DzFileInfo(getScriptFileName()).path());
+include(dir_self.filePath("UtilityFns.dsa"));
+
+/******************************************************************************/
+function waistbandVisible (visible) {
+	// Get all the relevant objects into a dictionary.
+	var skirt = getNodeDict(node);
+	if (skirt.error) {
+		error(skirt.error);
+		return;
+	}
+
+	// Make sure the materials we need exist.
+	var matSkirtIdx = skirt.shape.findMaterialIndex("Skirt");
+	if (matSkirtIdx == -1) {
+		error("Missing skirt surface. Did you select Sunfire's DForce Skirt?");
+		return;
+	}
+	var matSkirtGrp = skirt.mesh.getMaterialGroup(matSkirtIdx);
+
+	// The most important thing: make the whole node modifiable and saveable!
+	modifyAllAssets(skirt);
+
+	// Also important: make the mesh unique so other instances are not affected.
+	copyMesh(skirt);
+
+	// Let's-a-go!
+	skirt.mesh.beginEdit();
+
+	// Procedure is different between showing and hiding.
+	if (visible) {
+		// Blunt-force show the entire Abdomen group.
+		skirt.mesh.showFacets(mesh.findFaceGroup("Abdomen"));
+	} else {
+		// Select the skirt surface, expand to connected, invert, and hide.
+		skirt.mesh.selectFacets(matSkirtGrp);
+		skirt.mesh.selectConnectedFacets();
+		skirt.mesh.invertFacetSelection();
+		skirt.mesh.hideSelectedFacets();
+	}
+
+	// And, finish.
+	skirt.mesh.finishEdit();
+}

@@ -1,0 +1,256 @@
+// DAZ Studio version 4.20.0.17 filetype DAZ Script
+
+// Script by TiZ.
+//
+// TiZ's DAZ scripts are public domain; that applies *only* to the scripts, and
+// not to any content that a script is for. Please feel free to derive or learn
+// from this script as you wish! <3
+//
+// About this script specifically:
+//
+// My first attempt to make this script made use of selection sets, but
+// selection sets are inherently volatile. All facet deletions render the
+// selection sets invalid; when you do it in the UI, you actually *lose*
+// all selection sets. Because of that, I decided not to use selection sets.
+// Instead, we now rely on the fact that each skirt length has a consistent
+// number of rows when you add the skirt surface and the hem surface together;
+// You can select the hem surface and grow it repeatedly to redefine the hem,
+// and then shrink it back down to cut it.
+//
+// We can also make this script work for every skirt length. So you can cut
+// long 1 to long 3 to ankle to knee, for example. We mainly need to determine
+// how many rows there are, so we know how many rows to take out. Every row of
+// the skirt has 192 facets. So we divide the number of facets currently in the
+// skirt surface by 192 to know how many rows there are, and hence, our current
+// skirt length! It is important to keep in mind that the hem is a separate
+// surface from the skirt.
+//
+// This script will *not* work if there are any additional surfaces between
+// the waistband and the bottom of the skirt. If you want to add surfaces for
+// special purposes, like decorative trims, do that *after* resizing the skirt.
+// However, this script *will* work for any size of the hem surface as long as
+// it does exist, and it's at the bottom of the skirt. It relies on the shrink
+// behavior for selected facets at the edge of a mesh, and we don't have to
+// hard-code any particular hem size. So custom hem sizes will be preserved.
+//
+// This script will try to detect if any of its assumptions are false, and exit
+// without changing anything. It will pop up a message box for any of these
+// error cases.
+//
+// This approach also makes life easier for the Circle Skirt variation; it
+// changes the shape so we have to delete different numbers of rows to hit
+// an equivalent length. If you have the free Circle Skirt add-on, you'll
+// notice that all the skirt lengths in the JSON dictionary below are
+// different than in the regular version.
+
+// We'll use a JSON dictionary to hold all the target lengths.
+const totalSkirtLengths = {
+	"Long 1":   111,
+	"Long 2":   104,
+	"Long 3":   99,
+	"Ankle":    89,
+	"Tea":      81,
+	"Knee":     61,
+	"Cocktail": 49,
+	"Mini":     33
+}
+
+const rowFacets = 192;
+
+// Include Daz's sample functions.
+var dir_self = new DzDir(new DzFileInfo(getScriptFileName()).path());
+include(dir_self.filePath("DazSampleFns.dsa"));
+
+function error (text) {
+	MessageBox.critical(text, qsTr("Skirt Trimmer"), qsTr("&Ok"));
+}
+
+// We can use a length specifier string here, or a number
+// of rows with the actual main function.
+function cutSkirtToLength (targetLength) {
+	cutSkirtToRows(totalSkirtLengths[targetLength]);
+}
+
+// The main logic of skirt trimming.
+function cutSkirtToRows (targetRows) {
+	// We need this variable to be in this scope.
+	var node;
+
+	// First, we gotta get the node we're working with. Usually that will be
+	// the primary selection, but if this script is being executed as post-load
+	// data, we need to use the node we just loaded.
+	if (typeof(DataItem) != "undefined" &&
+		DataItem.inherits("DzElementPostLoadFileData")) {
+		// Got it. That is the node we want to use for the trim.
+		node = DataItem.getOwner();
+	} else node = Scene.getPrimarySelection();
+	if (!node) {
+		error("Please select Sunfire's DForce skirt.");
+		return;
+	}
+
+	// Let's get the shape and check its materials.
+	var obj = node.getObject();
+	if (!obj) {
+		error("Node has no object; not sure what broke.");
+		return;
+	}
+	var shape = obj.getCurrentShape();
+	if (!shape) {
+		error("Node has no shape; not sure what broke.");
+		return;
+	}
+
+	// Make sure the materials we need exist.
+	var matSkirtIdx = shape.findMaterialIndex("Skirt");
+	var matHemIdx = shape.findMaterialIndex("Bottom_Hem");
+	if (matSkirtIdx == -1 || matHemIdx == -1) {
+		error("Missing skirt and hem surfaces. " +
+		 "Did you select Sunfire's DForce Skirt?");
+		return;
+	}
+
+	// Mark the asset as modified.
+	//node.modifyAsset();
+	//shape.modifyGeometryAsset();
+
+	// Get the geometry and make sure it's a facet mesh.
+	var geom = shape.getCurrentGeometry(DzShape.WorkingGeometry);
+	//var geom = shape.getGeometry();
+	if (!geom) {
+		error("Node has no working geometry; not sure what broke.");
+		return;
+	} else if (!geom.inherits("DzFacetMesh")) {
+		error("Node's working geometry is not a facet mesh; " +
+		 "not sure what broke.");
+		return;
+	}
+
+	// Make sure the materials match the assumptions our script is based on;
+	// primarily that each row has 192 facets.
+	var matSkirtGrp = geom.getMaterialGroup(matSkirtIdx);
+	var matHemGrp = geom.getMaterialGroup(matHemIdx);
+	if ((matSkirtGrp.count() + matHemGrp.count()) % rowFacets != 0) {
+		error("The skirt's surfaces are the wrong size. " +
+		 "Did you select Sunfire's DForce Skirt?");
+		return;
+	}
+
+	// Let's figure out how many rows are where and how many will be removed.
+	var currentSkirtLength =
+	  (matSkirtGrp.count() + matHemGrp.count()) / rowFacets;
+	var currentHemLength = matHemGrp.count() / rowFacets;
+	var rowsToRemove = currentSkirtLength - targetRows;
+
+	// One last check: make sure the current skirt length > target length.
+	if (rowsToRemove < 0) {
+		error("The skirt is shorter than the desired length.");
+		return;
+	} else if (rowsToRemove == 0) { return; }  // Do nothing and exit quietly.
+
+	// Now, for the most important thing! We must make a copy of the mesh and
+	// we need to make sure all its verts and facets are deep copied. If we
+	// don't do this, we can't save the scene, we can't save wearables, we can't
+	// reload the original skirt, we lose all morphs (very bad for circle skirt
+	// and skirt go spinny), and we break a LOOOOOT of stuff. This does mean
+	// that an entire copy of the skirt will be included in the saved scene, but
+	// that already happens to a larger degree when you save simulation results
+	// anyways.
+	//var mesh = geom;
+	var mesh = geom.makeCopy(false, false);
+	/*var mesh = DzFacetMesh();
+	var result = mesh.copyFrom(geom, false, false);
+	if (!result) {
+		error("Failed to copy mesh.");
+		return;
+	}*/
+
+	// Change the mesh.
+	shape.setFacetMesh(mesh);
+
+	/*var numUVSets = geom.getNumUVSets();
+	var uvSets = Array(numUVSets);
+	for (var i = 0; i < numUVSets; i++) {
+		//uvSets[i] = DzUVSet();
+		//uvSets[i].copyFrom(geom.getUVSet(i), true);
+		uvSets[i] = geom.getUVSet(i).makeCopy();
+	}
+	mesh.removeAllUVSets();
+	for (var i = 0; i < numUVSets; i++) {
+		mesh.addUVSet(uvSets[i]);
+	}*/
+
+	// So I guess we'd better get started.
+	mesh.beginEdit();
+	mesh.beginFacetSelectionEdit();
+
+	// Select the hem surface. We recreate the material group from the copied
+	// mesh just to be safe.
+	mesh.selectFacets(mesh.getMaterialGroup(matHemIdx));
+
+	// Grow the selection.
+	for (var i = 0; i < rowsToRemove; i++) mesh.growFacetSelection();
+
+	mesh.finishFacetSelectionEdit();
+
+	// Assign selection to hem surface.
+	mesh.addSelectedFacetsToMaterialGroup(matHemIdx);
+
+	mesh.beginFacetSelectionEdit();
+
+	// Shrink the selection.
+	for (var i = 0; i < currentHemLength; i++) mesh.shrinkFacetSelection();
+
+	// Delete those facets. Unfortunately, none of these methods work.
+	//mesh.removeSelectedFacets();
+	//mesh.removeFacets(mesh.getSelectedFacets(), true);
+
+	// This seems to have the same result as the below.
+	// Or does it? Maybe it does not remove the unused vertices?
+	/*mesh.getSelectedFacets().sort().reverse().forEach(function(idx) {
+		mesh.removeFacet(idx);
+	});*/
+	//mesh.removeVertices(mesh.getUnusedVertices());
+	//mesh.removeUnusedVertices(true);
+
+	// Create a temporary face group for the deletion.
+	/*mesh.createFaceGroup("ToCut");
+	mesh.addSelectedFacetsToGroup("ToCut");
+	mesh.removeFacets(mesh.findFaceGroup("ToCut"), true);
+	var result = mesh.removeFaceGroup("ToCut", "Skirt");
+	if (result > 0x0) {
+		error(getErrorMessage(result));
+		return;
+	}*/
+
+	mesh.finishFacetSelectionEdit();
+	mesh.finishEdit();
+
+	// Now, we *cheat*, and simply activate the UI item that deletes
+	// selected facets. There does not seem to be any other sane way
+	// to make this change. ...Too bad *this* doesn't work either!!
+	var actionMgr = MainWindow.getActionMgr();
+	var action = actionMgr.findAction("DzPGDeleteSelectedFacetsAction");
+	if (!action) {
+		error("Can't find the facet deletion action.");
+		return;
+	}
+
+	// All done!
+	//mesh.deselectAllFacets();
+	//mesh.finishEdit();
+
+	// One last cheat idea: Copy the mesh *again*, in hopes that the unused
+	// vertices actually get dropped.
+	//var mesh2 = mesh.makeCopy(false, false);
+
+	// Rebuild working mesh.
+	//shape.invalidateGeomCaches();
+
+	// Rebuild maps.
+	//for (var i = 0; i < mesh.getNumUVSets(); i++) shape.rebuildBaseMap(i);
+
+	// Mark the asset as modified.
+	node.modifyAsset();
+	shape.modifyGeometryAsset();
+}

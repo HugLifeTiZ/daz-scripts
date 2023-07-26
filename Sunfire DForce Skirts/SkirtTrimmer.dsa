@@ -1,0 +1,193 @@
+// DAZ Studio version 4.20.0.17 filetype DAZ Script
+
+/******************************************************************************
+ * Script by TiZ.
+ *
+ * TiZ's DAZ scripts are public domain; that applies *only* to the scripts, and
+ * not to any content that a script is for. Please feel free to derive or learn
+ * from this script as you wish! <3
+ *
+ * About this script specifically:
+ *
+ * My first attempt to make this script made use of selection sets, but
+ * selection sets are inherently volatile. All facet deletions render the
+ * selection sets invalid; when you do it in the UI, you actually *lose*
+ * all selection sets. Because of that, I decided not to use selection sets.
+ * Instead, we now rely on the fact that each skirt length has a consistent
+ * number of rows when you add the skirt surface and the hem surface together;
+ * You can select the hem surface and grow it repeatedly to redefine the hem,
+ * and then shrink it back down to cut it.
+ *
+ * We can also make this script work for every skirt length. So you can cut
+ * long 1 to long 3 to ankle to knee, for example. We mainly need to determine
+ * how many rows there are, so we know how many rows to take out. Every row of
+ * the skirt has 192 facets. So we divide the number of facets currently in the
+ * skirt surface by 192 to know how many rows there are, and hence, our current
+ * skirt length! It is important to keep in mind that the hem is a separate
+ * surface from the skirt. This script could be adapted to other skirts if they
+ * have a similar surface structure.
+ *
+ * This script will *not* work if there are any additional surfaces between
+ * the waistband and the bottom of the skirt. If you want to add surfaces for
+ * special purposes, like decorative trims, do that *after* resizing the skirt.
+ * However, this script *will* work for any size of the hem surface as long as
+ * it does exist, and it's at the bottom of the skirt. It relies on the shrink
+ * behavior for selected facets at the edge of a mesh, and we don't have to
+ * hard-code any particular hem size. So custom hem sizes will be preserved.
+ *
+ * This script will try to detect if any of its assumptions are false, and exit
+ * without changing anything. It will pop up a message box for any of these
+ * error cases.
+ *
+ * This approach also makes life easier for the Circle Skirt variation; it
+ * changes the shape so we have to delete different numbers of rows to hit
+ * an equivalent length. If you have the free Circle Skirt add-on, you'll
+ * notice that all the skirt lengths in the JSON dictionary below are
+ * different than in the regular version.
+ ******************************************************************************/
+
+
+/******************************************************************************/
+// Include all my utility functions.
+var dir_self = new DzDir(new DzFileInfo(getScriptFileName()).path());
+include(dir_self.filePath("../UtilityFns.dsa"));
+
+// We'll use a JSON dictionary to hold all the target lengths.
+const totalSkirtLengths = {
+	"Long 1":   111,
+	"Long 2":   104,
+	"Long 3":   99,
+	"Ankle":    89,
+	"Tea":      81,
+	"Knee":     61,
+	"Cocktail": 49,
+	"Mini":     33
+}
+
+// We use this to determine how many rows are in the skirt.
+const rowFacets = 192;
+
+/******************************************************************************/
+// We can use a length specifier string here, or a number
+// of rows with the actual main function.
+function cutSkirtToLength (targetLength) {
+	cutSkirtToRows(totalSkirtLengths[targetLength]);
+}
+
+/******************************************************************************/
+// bool : Returns true if the selected node is Sunfire's DForce skirt.
+// Could hypothetically return false if you modify it heavily by changing
+// a bunch of materials, but then the trimmer won't work anyways.
+function isSunfireSkirt (node) {
+	// Get info about the selected node.
+	var obj;
+	if (node && node.isNodeDict) obj = node;
+	else obj = getNodeDict(node);
+
+	// Make sure the materials exist. Since this is used to run the script and
+	// it won't work without these materials anyways, it's safe to rely on this.
+	var skirtGrp = obj.mesh.findMaterialGroup("Skirt");
+	var hemGrp = obj.mesh.findMaterialGroup("Bottom_Hem");
+	if (skirtGrp && hemGrp &&
+	 (skirtGrp.count() + hemGrp.count()) % rowFacets == 0) {
+		return true;
+	}
+}
+
+/******************************************************************************/
+// The main logic of skirt trimming.
+function cutSkirtToRows (targetRows) {
+	// We need this variable to be in this scope.
+	var node;
+
+	// First, we gotta get the node we're working with. Usually that will be
+	// the primary selection, but if this script is being executed as post-load
+	// data, we need to use the node we just loaded.
+	if (typeof(DataItem) != "undefined" &&
+		DataItem.inherits("DzElementPostLoadFileData")) {
+		// Got it. That is the node we want to use for the trim.
+		node = DataItem.getOwner();
+	} else node = Scene.getPrimarySelection();
+	if (!node) {
+		error("Please select Sunfire's DForce skirt.");
+		return;
+	}
+
+	// Get all the relevant objects into a dictionary.
+	var skirt = getNodeDict(node);
+	if (skirt.error) {
+		error(skirt.error);
+		return;
+	}
+
+	// Make sure the selected node is Sunfire's DForce skirt.
+	if (!isSunfireSkirt(skirt)) {
+		error("Selected node doesn't seem to be Sunfire's DForce skirt.");
+		return;
+	}
+
+	// Get material indexes and groups.
+	var skirtIdx = skirt.shape.findMaterialIndex("Skirt");
+	var hemIdx = skirt.shape.findMaterialIndex("Bottom_Hem");
+	var skirtGrp = skirt.mesh.getMaterialGroup(skirtIdx);
+	var hemGrp = skirt.mesh.getMaterialGroup(hemIdx);
+
+	// Figure out how many rows are where and how many will be removed.
+	var currentSkirtLength =
+	  (skirtGrp.count() + hemGrp.count()) / rowFacets;
+	var currentHemLength = hemGrp.count() / rowFacets;
+	var rowsToRemove = currentSkirtLength - targetRows;
+
+	// Make sure the current skirt length > target length.
+	if (rowsToRemove < 0) {
+		error("The skirt is shorter than the desired length.");
+		return;
+	} else if (currentSkirtLength - rowsToRemove <= currentHemLength) {
+		error("The hem is too big to trim the skirt to the desired length.");
+		return;
+	} else if (rowsToRemove == 0) { return; }  // Do nothing and exit quietly.
+
+	// The most important thing: make the whole node modifiable and saveable!
+	modifyAllAssets(skirt);
+
+	// Also important: make the mesh unique so other instances are not affected.
+	copyMesh(skirt);
+
+	// So I guess we'd better get started.
+	skirt.mesh.beginEdit();
+
+	// Select the hem surface.
+	skirt.mesh.selectFacets(hemGrp);
+
+	// Grow the selection.
+	for (var i = 0; i < rowsToRemove; i++) skirt.mesh.growFacetSelection();
+
+	// Assign selection to hem surface.
+	skirt.mesh.addSelectedFacetsToMaterialGroup(hemIdx);
+
+	// Shrink the selection.
+	for (var i = 0; i < currentHemLength; i++)
+		skirt.mesh.shrinkFacetSelection();
+
+	// Create a temporary face group and use that for the deletion.
+	skirt.mesh.createFaceGroup("ToCut");
+	skirt.mesh.addSelectedFacetsToGroup("ToCut");
+	skirt.mesh.removeFacets(skirt.mesh.findFaceGroup("ToCut"), true);
+	var result = skirt.mesh.removeFaceGroup("ToCut", "Skirt");
+	if (result > 0x0) {
+		error(getErrorMessage(result));
+		return;
+	}
+
+	// All done!
+	skirt.mesh.deselectAllFacets();
+	skirt.mesh.finishEdit();
+
+	// Remove and re-add the smoothing modifier so that morphs act right
+	// without having to save and reload the scene.
+	var oldSmooth = skirt.object.findModifier("DzMeshSmoothModifier");
+	var newSmooth = new DzMeshSmoothModifier();
+	newSmooth.copyFrom(oldSmooth);
+	skirt.object.removeModifier(oldSmooth);
+	skirt.object.addModifier(newSmooth);
+}
